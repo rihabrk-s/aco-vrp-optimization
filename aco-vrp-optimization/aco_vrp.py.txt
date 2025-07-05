@@ -1,0 +1,157 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# ==========================
+# Paramètres du problème
+# ==========================
+n_clients = 10
+n_vehicules = 3
+capacite_vehicule = 15
+nb_fourmis = 10
+nb_iterations = 100
+
+alpha = 1
+beta = 5
+rho = 0.5
+Q = 100
+
+# ==========================
+# Génération aléatoire des clients
+# ==========================
+np.random.seed(42)
+clients = pd.DataFrame({
+    'id': range(n_clients),
+    'x': np.random.randint(0, 100, n_clients),
+    'y': np.random.randint(0, 100, n_clients),
+    'demande': np.random.randint(1, 5, n_clients),
+    'debut': np.random.randint(0, 50, n_clients),
+    'fin': np.random.randint(60, 100, n_clients)
+})
+clients.loc[0, ['demande', 'debut', 'fin']] = [0, 0, 999]  # Dépôt
+
+# ==========================
+# Distances et attractivité
+# ==========================
+distance = np.sqrt(
+    (clients['x'].values[:, None] - clients['x'].values[None, :]) ** 2 +
+    (clients['y'].values[:, None] - clients['y'].values[None, :]) ** 2
+)
+attractivite = 1 / (distance + 1e-6)
+pheromones = np.ones((n_clients, n_clients))
+
+# ==========================
+# Construction de solution multi-véhicules
+# ==========================
+def construire_solution():
+    solution = []
+    non_visites = set(range(1, n_clients))  # sans dépôt
+
+    for _ in range(n_vehicules):
+        chemin = [0]
+        capacite = capacite_vehicule
+        temps = 0
+
+        while True:
+            i = chemin[-1]
+            candidats = []
+
+            for j in non_visites:
+                demande = clients.at[j, 'demande']
+                debut = clients.at[j, 'debut']
+                fin = clients.at[j, 'fin']
+                t_arrivee = temps + distance[i][j]
+
+                if capacite >= demande and t_arrivee <= fin:
+                    candidats.append(j)
+
+            if not candidats:
+                break
+
+            probs = np.array([(pheromones[i][j] ** alpha) * (attractivite[i][j] ** beta) for j in candidats])
+            probs /= probs.sum()
+            j = np.random.choice(candidats, p=probs)
+
+            chemin.append(j)
+            non_visites.remove(j)
+            capacite -= clients.at[j, 'demande']
+            temps = max(temps + distance[i][j], clients.at[j, 'debut'])
+
+        chemin.append(0)  # retour au dépôt
+        solution.append(chemin)
+
+        if not non_visites:
+            break
+
+    # Si des clients restent non visités, les ajouter au dernier véhicule
+    if non_visites:
+        chemin = [0]
+        for j in list(non_visites):
+            chemin.append(j)
+        chemin.append(0)
+        solution.append(chemin)
+
+    return solution
+
+# ==========================
+# Mise à jour des phéromones
+# ==========================
+def mise_a_jour_pheromones(solution):
+    global pheromones
+    pheromones *= (1 - rho)
+    for chemin in solution:
+        longueur = sum(distance[chemin[i]][chemin[i + 1]] for i in range(len(chemin) - 1))
+        depot = Q / longueur
+        for i in range(len(chemin) - 1):
+            pheromones[chemin[i]][chemin[i + 1]] += depot
+
+# ==========================
+# Boucle principale ACO
+# ==========================
+best_solution = None
+best_distance = np.inf
+
+for iteration in range(nb_iterations):
+    all_solutions = []
+    for _ in range(nb_fourmis):
+        solution = construire_solution()
+        total_distance = sum(
+            sum(distance[chemin[i]][chemin[i + 1]] for i in range(len(chemin) - 1))
+            for chemin in solution
+        )
+        if total_distance < best_distance:
+            best_distance = total_distance
+            best_solution = solution
+        all_solutions.append(solution)
+
+    for s in all_solutions:
+        mise_a_jour_pheromones(s)
+
+    print(f"Itération {iteration + 1}, meilleure distance : {best_distance:.2f}")
+
+# ==========================
+# Visualisation
+# ==========================
+colors = ['blue', 'green', 'purple', 'orange', 'cyan']
+plt.figure(figsize=(8, 6))
+
+# Affichage des clients
+for i in range(n_clients):
+    color = 'red' if i == 0 else 'black'
+    plt.scatter(clients.loc[i, 'x'], clients.loc[i, 'y'], color=color, s=50)
+    plt.text(clients.loc[i, 'x'] + 1, clients.loc[i, 'y'] + 1, str(i), fontsize=9)
+
+# Affichage des tournées
+for idx, chemin in enumerate(best_solution):
+    col = colors[idx % len(colors)]
+    for i in range(len(chemin) - 1):
+        x1, y1 = clients.loc[chemin[i], ['x', 'y']]
+        x2, y2 = clients.loc[chemin[i + 1], ['x', 'y']]
+        plt.plot([x1, x2], [y1, y2], linestyle='--', color=col, label=f"V{idx + 1}" if i == 0 else "")
+
+plt.title("Tournées optimisées par ACO (multi-véhicules)")
+plt.xlabel("X")
+plt.ylabel("Y")
+plt.grid(True)
+plt.legend()
+plt.show(
